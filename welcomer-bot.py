@@ -10,6 +10,7 @@ import argparse
 from asyncio import get_event_loop
 from logging import Formatter, INFO, StreamHandler, getLogger
 import pickle
+import json
 
 __cwd__ = os.getcwd()
 __version__ = float(version[:3])
@@ -32,51 +33,44 @@ class Config:
         ret = {}
         for key in dir(self):
             if '__' not in key and key not in self.base:
-                ret[key] = getattr(self, key)
+                val = getattr(self, key)
+                ret[key] = val if not isinstance(val, set) else list(val)
         return ret
 
 
-def loader(fname):
-    if '/' not in fname:
-        fname = __cwd__ + '/' + fname.strip('.py')
-    listoffiles = glob.glob(f'{fname}.*')
+def loader(basename):
+    basename = basename.strip('.pkl').strip('.pickle')
+    assert '.py' not in basename
+    if '/' not in basename:
+        basename = __cwd__ + '/' + basename
+    listoffiles = glob.glob(f'{basename}.p*k*')
     fname = max(listoffiles, key=os.path.getctime)
     print(f'Running on file: {fname}')
 
-    if fname.endswith('.pickle'):
-        try:
-            with open(fname, 'rb') as f:
-                cf = pickle.load(f)
-            cf['filename'] = fname
-            return Config(cf)
-        except Exception as e:
-            print(f'Error loading pickle: {e}')
-            try:
-                os.remove(fname)
-            except Exception as e:
-                pass
-
     try:
-        if __version__ >= 3.5:
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("config", fname)
-            cf = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(cf)
-        elif __version__ >= 3.3:
-            from importlib.machinery import SourceFileLoader
-            cf = SourceFileLoader("config", fname).load_module()
-        elif __version__ <= 3.0:
-            import imp
-            cf = imp.load_source('config', fname)
+        with open(fname, 'rb') as f:
+            cf = pickle.load(f)
+        cf['filename'] = basename
+        save_py(basename, cf)
+        return Config(cf)
     except Exception as e:
-        print('File not found or incorrect <{}>'.format(fname))
-        print('Try using python {} yourself'.format(fname))
-        print(e)
-        exit(1)
-    with open(fname.replace('.py', '.pickle'), 'wb') as f:
-        cf.filename = fname
-        pickle.dump(Config(cf).to_dict(), f)
-    return Config(cf)
+        print(f'Error loading pickle: {e}')
+        return
+
+
+def save_pkl(basename, cf):
+    with open(basename + '.pickle', 'wb') as f:
+        pickle.dump(cf, f)
+    pass
+
+
+def save_py(basename, cf):
+    with open(basename + '.py', 'w') as f:
+        for key, val in cf.items():
+            if isinstance(val, str):
+                val = f'''"""{val}"""'''
+            f.write(f"""{key} = {val}\n""")
+    pass
 
 
 class Welcomer(commands.Bot):
@@ -87,7 +81,8 @@ class Welcomer(commands.Bot):
         self.logger = logger
         self.status = ['with Python', 'prefix <<']
         self.config = config
-        super().__init__(command_prefix=config.prefix)
+        prefix = '<<' if 'prefix' not in dir(config) else config.prefix
+        super().__init__(command_prefix=prefix)
 
     @classmethod
     async def get_instance(cls, config):
@@ -128,14 +123,13 @@ class Welcomer(commands.Bot):
         return
 
     def save_config(self):
-        with open(self.config.filename.replace('.py', '.pickle'), 'wb') as f:
-            pickle.dump(self.config.to_dict(), f)
+        save_pkl(self.config.filename, self.config.to_dict())
+        save_py(self.config.filename, self.config.to_dict())
         pass
 
     def refresh_config(self):
-        with open(self.config.filename.replace('.py', '.pickle'), 'rb') as f:
-            cf = pickle.load(f)
-        self.config = Config(cf)
+        cf = loader(self.config.filename)
+        self.config = cf
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Startup the bot')
