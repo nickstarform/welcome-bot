@@ -11,6 +11,7 @@ from asyncio import get_event_loop
 from logging import Formatter, INFO, StreamHandler, getLogger
 import pickle
 import json
+import importlib
 
 __cwd__ = os.getcwd()
 __version__ = float(version[:3])
@@ -54,7 +55,7 @@ def loader(basename):
         save_py(basename, cf)
         return Config(cf)
     except Exception as e:
-        print(f'Error loading pickle: {e}')
+        print(f'Error loading pickle. Try following the example and then use refreshpickle.py to make the pickle file: {e}')
         return
 
 
@@ -81,6 +82,7 @@ class Welcomer(commands.Bot):
         self.logger = logger
         self.status = ['with Python', 'prefix <<']
         self.config = config
+        self.spammers = {}
         prefix = '<<' if 'prefix' not in dir(config) else config.prefix
         super().__init__(command_prefix=prefix)
 
@@ -95,11 +97,36 @@ class Welcomer(commands.Bot):
         logger.setLevel(INFO)
         return cls(config, logger)
 
+    def check_spam(self, message):
+        if message.author.id in [369362004458078208,]: # people to exclude: yin,
+            return False
+        if message.author.id not in self.spammers:
+            self.spammers[message.author.id] = {'date': datetime.datetime.now(), 'count': 1}
+            return False
+        if self.spammers[message.author.id]['date'] < datetime.datetime.now() - datetime.timedelta(hours=24):
+            self.spammers[message.author.id] = {'date': datetime.datetime.now(), 'count': 1}
+            return False
+        self.spammers[message.author.id]['count'] += 1
+        if self.spammers[message.author.id]['count'] % 5 == 0:
+            return self.spammers[message.author.id]['count']
+        return False
 
     async def on_message(self, message):
         permis = False
         channel = message.channel
+        if message.guild.id != 148606162810568704:
+            return
         if channel.id in self.config.clear_channel:  # read the rules
+            try:
+                spam = self.check_spam(message)
+                if spam:
+                    # user is spamming, send mesage to staff channel
+                    chan = message.guild.get_channel(259728514914189312)
+                    ret = f"""***{message.author.name}#{message.author.discriminator} | {message.author.id}*** has spammed {spam} messages in read the rules."""
+                    await chan.send(ret)
+                    self.logger.info(ret)
+            except Exception as e:
+                self.logger.warning(f'Error checking for spammers: {e}')
             try:
                 await message.delete()
             except Exception as e:
@@ -148,7 +175,7 @@ if __name__ == '__main__':
         _ = loop.run_until_complete(shutdown(bot, reason=e))
         exit(1)
     # bot.add_cog(Extension(bot))
-    for cog in ['cogs.welcome', ]:
+    for cog in ['cogs.welcome', 'cogs.guildreset', 'cogs.filtering']:
         bot.load_extension(cog)
         bot._loaded_extensions.append(cog)
 

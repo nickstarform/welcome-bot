@@ -33,6 +33,43 @@ def timediff(dt1, dt2):
     return micro / (1e6)
 
 
+def getid(string):
+    return ''.join([i for i in string if str.isdigit(i)])
+
+
+async def parse(msg, guild):
+    msg = msg.replace('\\', '')
+    if '<#' in msg:
+        regex = r'(\<\#)([0-9]*)(\>)'
+        matches = [[m.span(), m.group()] for m in list(re.finditer(regex, msg, re.MULTILINE))]
+        matches.sort(key=lambda x: x[0][0])
+        for match in matches[::-1]:
+            try:
+                start, end = match[0]
+                mention_channel = guild.get_channel(int(getid(match[1])))
+                msg = f'{msg.replace(match[1], mention_channel.mention)}'
+            except Exception:
+                continue
+    if '<:' in msg:
+        regex = r'(\<\:)(.*)(\:)([0-9]*)(\>)'
+        matches = [[m.span(), m.group()] for m in list(re.finditer(regex, msg, re.MULTILINE))]
+        matches.sort(key=lambda x: x[0][0])
+        for match in matches[::-1]:
+            try:
+                start, end = match[0]
+                emoji = int(getid(match[1].split(':')[-1]))
+                print(emoji)
+                emoji = await guild.fetch_emoji(emoji)
+                print(emoji)
+                if not emoji.is_usable():
+                    emoji = reactions['no']
+                msg = f'{msg.replace(match[1], str(emoji))}'
+            except Exception as e:
+                print(e)
+                continue
+    return msg
+
+
 class Welcome(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -52,6 +89,11 @@ class Welcome(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
+        if not before.joined_at:
+            return
+        date = datetime.datetime.now() - datetime.timedelta(days=7)
+        if before.joined_at < date:
+            return
         if before.roles != after.roles:
             before_roles = list(map(lambda x: x.id, before.roles))
             after_roles = list(map(lambda x: x.id, after.roles))
@@ -65,7 +107,6 @@ class Welcome(commands.Cog):
             if any([x in self.bot.config.check_roles for x in diff_roles]):
                 channel = before.guild.get_channel(self.bot.config.welcomer_chan)
                 await self.send_welcome(after, channel=channel, guild=before.guild)
-
 
     async def send_welcome(self, member, check: bool=False, channel = None, guild = None):
         now = datetime.datetime.now()
@@ -90,28 +131,7 @@ class Welcome(commands.Cog):
             except Exception as e:
                 print(f'Cannot find user: {e}')
             msg = msg.replace('$USER$', username).replace('$SERVER$', member.guild.name)
-            if '<#' in msg:
-                regex = r'(\<\#)([0-9]*)(\>)'
-                matches = re.finditer(regex, msg, re.MULTILINE)
-                for mnum, match in enumerate(matches, start=1):
-                    try:
-                        mention_channel = guild.get_channel(int(match.group().strip('<#').strip('>')))
-                        msg = f'{msg[:match.start()]}{mention_channel.mention}{msg[match.end():]}'.replace('\\', '')
-                    except Exception:
-                        continue
-            if '<:' in msg:
-                regex = r'(\<\:)(.*)(\:)([0-9]*)(\>)'
-                matches = re.finditer(regex, msg, re.MULTILINE)
-                emojis = dict([[e.id, e] for e in guild.emojis])
-                for mnum, match in enumerate(matches, start=1):
-                    try:
-                        emoji = int(match.group().split(':')[-1].strip('>'))
-                        emoji = emojis[emoji]
-                        if not emoji.is_usable():
-                            continue
-                        msg = f'{msg[:match.start()]}{emoji}{msg[match.end():]}'.replace('\\', '')
-                    except Exception:
-                        continue
+            msg = await parse(msg, guild)
             if self.bot.config.testing and not check:
                 bot_owner = self.bot.get_user(self.bot.config.bot_owner)
                 if not bot_owner.dm_channel:
@@ -193,7 +213,7 @@ class Welcome(commands.Cog):
         if not check_staff(self.bot.config, ctx.author.roles):
             return
         if ctx.invoked_subcommand is None:
-            await ctx.send('|'.join(self.bot.config.welcome_repeat))
+            await ctx.send(await parse('|'.join(self.bot.config.welcome_repeat), ctx.guild))
             return
 
     @welcome_repeat.command(name='add')
@@ -234,7 +254,7 @@ class Welcome(commands.Cog):
         if not check_staff(self.bot.config, ctx.author.roles):
             return
         if ctx.invoked_subcommand is None:
-            await ctx.send('|'.join(self.bot.config.welcome_prefix))
+            await ctx.send(await parse('|'.join(self.bot.config.welcome_prefix), ctx.guild))
             return
 
     @welcome_prefix.command(name='add')
@@ -287,7 +307,7 @@ class Welcome(commands.Cog):
         if not check_staff(self.bot.config, ctx.author.roles):
             return
         if ctx.invoked_subcommand is None:
-            await ctx.send('|'.join(self.bot.config.welcome_suffix))
+            await ctx.send(await parse('|'.join(self.bot.config.welcome_suffix), ctx.guild))
             return
 
     @welcome_suffix.command(name='add')
